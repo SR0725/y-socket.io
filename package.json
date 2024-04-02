@@ -43,7 +43,6 @@
     "url": "https://github.com/ivan-topp/y-socketio"
   },
   "scripts": {
-    "start": "node ./dist/server/server",
     "build": "tsup",
     "dev": "tsup --watch --onSuccess \"node dist/server/server.js\"",
     "lint": "ts-standard && tsup",
