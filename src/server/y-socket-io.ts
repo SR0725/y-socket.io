@@ -1,17 +1,16 @@
-import * as Y from 'yjs'
-import { Namespace, Server, Socket } from 'socket.io'
-import * as AwarenessProtocol from 'y-protocols/awareness'
-import { LeveldbPersistence } from 'y-leveldb'
-import { Document } from './document'
-import { Observable } from 'lib0/observable'
+import * as Y from "yjs";
+import { Namespace, Server, Socket } from "socket.io";
+import * as AwarenessProtocol from "y-protocols/awareness";
+import { Document } from "./document";
+import { Observable } from "lib0/observable";
 
 /**
  * Level db persistence object
  */
 export interface Persistence {
-  bindState: (docName: string, ydoc: Document) => void
-  writeState: (docName: string, ydoc: Document) => Promise<any>
-  provider: any
+  bindState: (docName: string, ydoc: Document) => void;
+  writeState: (docName: string, ydoc: Document) => Promise<any>;
+  provider: any;
 }
 
 /**
@@ -24,18 +23,7 @@ export interface YSocketIOConfiguration {
   /**
    * Enable/Disable garbage collection (default: gc=true)
    */
-  gcEnabled?: boolean
-  /**
-   * The directory path where the persistent Level database will be stored
-   */
-  levelPersistenceDir?: string
-  /**
-   * Callback to authenticate the client connection.
-   *
-   *  It can be a promise and if it returns true, the connection is allowed; otherwise, if it returns false, the connection is rejected.
-   * @param handshake Provided from the handshake attribute of the socket io
-   */
-  authenticate?: (handshake: { [key: string]: any }) => Promise<boolean> | boolean
+  gcEnabled?: boolean;
 }
 
 /**
@@ -45,42 +33,34 @@ export class YSocketIO extends Observable<string> {
   /**
    * @type {Map<string, Document>}
    */
-  private readonly _documents: Map<string, Document> = new Map<string, Document>()
+  private readonly _documents: Map<string, Document> = new Map<
+    string,
+    Document
+  >();
   /**
    * @type {Server}
    */
-  private readonly io: Server
-  /**
-   * @type {string | undefined | null}
-   */
-  private readonly _levelPersistenceDir: string | undefined | null = null
-  /**
-   * @type {Persistence | null}
-   */
-  private persistence: Persistence | null = null
+  private readonly io: Server;
   /**
    * @type {YSocketIOConfiguration}
    */
-  private readonly configuration?: YSocketIOConfiguration
+  private readonly configuration?: YSocketIOConfiguration;
   /**
    * @type {Namespace | null}
    */
-  public nsp: Namespace | null = null
+  public nsp: Namespace | null = null;
   /**
    * YSocketIO constructor.
    * @constructor
    * @param {Server} io Server instance from Socket IO
    * @param {YSocketIOConfiguration} configuration (Optional) The YSocketIO configuration
    */
-  constructor (io: Server, configuration?: YSocketIOConfiguration) {
-    super()
+  constructor(io: Server, configuration?: YSocketIOConfiguration) {
+    super();
 
-    this.io = io
+    this.io = io;
 
-    this._levelPersistenceDir = configuration?.levelPersistenceDir ?? process.env.YPERSISTENCE
-    if (this._levelPersistenceDir != null) this.initLevelDB(this._levelPersistenceDir)
-
-    this.configuration = configuration
+    this.configuration = configuration;
   }
 
   /**
@@ -92,27 +72,20 @@ export class YSocketIO extends Observable<string> {
    *  It also starts socket connection listeners.
    * @type {() => void}
    */
-  public initialize (): void {
-    this.nsp = this.io.of(/^\/yjs\|.*$/)
-
-    this.nsp.use(async (socket, next) => {
-      if ((this.configuration?.authenticate) == null) return next()
-      if (await this.configuration.authenticate(socket.handshake)) return next()
-      else return next(new Error('Unauthorized'))
-    })
-
-    this.nsp.on('connection', async (socket) => {
-      const namespace = socket.nsp.name.replace(/\/yjs\|/, '')
-
-      const doc = await this.initDocument(namespace, socket.nsp, this.configuration?.gcEnabled)
-
-      this.initSyncListeners(socket, doc)
-      this.initAwarenessListeners(socket, doc)
-
-      this.initSocketListeners(socket, doc)
-
-      this.startSynchronization(socket, doc)
-    })
+  public initialize(): void {
+    this.io.on("connection", async (socket) => {
+      socket.on("yjs-connect", async (roomName: string) => {
+        const doc = await this.initDocument(
+          roomName,
+          socket.nsp,
+          this.configuration?.gcEnabled
+        );
+        this.initSyncListeners(socket, doc, roomName);
+        this.initAwarenessListeners(socket, doc, roomName);
+        this.initSocketListeners(socket, doc);
+        this.startSynchronization(socket, doc, roomName);
+      });
+    });
   }
 
   /**
@@ -121,8 +94,8 @@ export class YSocketIO extends Observable<string> {
    * this way when you destroy the document you are also closing any existing connection on the document.
    * @type {Map<string, Document>}
    */
-  public get documents (): Map<string, Document> {
-    return this._documents
+  public get documents(): Map<string, Document> {
+    return this._documents;
   }
 
   /**
@@ -138,42 +111,28 @@ export class YSocketIO extends Observable<string> {
    * @param {boolean} gc Enable/Disable garbage collection (default: gc=true)
    * @returns {Promise<Document>} The document
    */
-  private async initDocument (name: string, namespace: Namespace, gc: boolean = true): Promise<Document> {
-    const doc = this._documents.get(name) ?? (new Document(name, namespace, {
-      onUpdate: (doc, update) => this.emit('document-update', [doc, update]),
-      onChangeAwareness: (doc, update) => this.emit('awareness-update', [doc, update]),
-      onDestroy: async (doc) => {
-        this._documents.delete(doc.name)
-        this.emit('document-destroy', [doc])
-      }
-    }))
-    doc.gc = gc
+  private async initDocument(
+    name: string,
+    namespace: Namespace,
+    gc: boolean = true
+  ): Promise<Document> {
+    const doc =
+      this._documents.get(name) ??
+      new Document(name, namespace, {
+        onUpdate: (doc, update) => this.emit("document-update", [doc, update]),
+        onChangeAwareness: (doc, update) =>
+          this.emit("awareness-update", [doc, update]),
+        onDestroy: async (doc) => {
+          this._documents.delete(doc.name);
+          this.emit("document-destroy", [doc]);
+        },
+      });
+    doc.gc = gc;
     if (!this._documents.has(name)) {
-      if (this.persistence != null) await this.persistence.bindState(name, doc)
-      this._documents.set(name, doc)
-      this.emit('document-loaded', [doc])
+      this._documents.set(name, doc);
+      this.emit("document-loaded", [doc]);
     }
-    return doc
-  }
-
-  /**
-   * This method sets persistence if enabled.
-   * @private
-   * @param {string} levelPersistenceDir The directory path where the persistent Level database is stored
-   */
-  private initLevelDB (levelPersistenceDir: string): void {
-    const ldb = new LeveldbPersistence(levelPersistenceDir)
-    this.persistence = {
-      provider: ldb,
-      bindState: async (docName: string, ydoc: Document) => {
-        const persistedYdoc = await ldb.getYDoc(docName)
-        const newUpdates = Y.encodeStateAsUpdate(ydoc)
-        await ldb.storeUpdate(docName, newUpdates)
-        Y.applyUpdate(ydoc, Y.encodeStateAsUpdate(persistedYdoc))
-        ydoc.on('update', async (update: Uint8Array) => await ldb.storeUpdate(docName, update))
-      },
-      writeState: async (_docName: string, _ydoc: Document) => { }
-    }
+    return doc;
   }
 
   /**
@@ -195,15 +154,22 @@ export class YSocketIO extends Observable<string> {
    * @param {Socket} socket The socket connection
    * @param {Document} doc The document
    */
-  private readonly initSyncListeners = (socket: Socket, doc: Document): void => {
-    socket.on('sync-step-1', (stateVector: Uint8Array, syncStep2: (update: Uint8Array) => void) => {
-      syncStep2(Y.encodeStateAsUpdate(doc, new Uint8Array(stateVector)))
-    })
+  private readonly initSyncListeners = (
+    socket: Socket,
+    doc: Document,
+    roomName: string
+  ): void => {
+    socket.on(
+      `${roomName}-sync-step-1`,
+      (stateVector: Uint8Array, syncStep2: (update: Uint8Array) => void) => {
+        syncStep2(Y.encodeStateAsUpdate(doc, new Uint8Array(stateVector)));
+      }
+    );
 
-    socket.on('sync-update', (update: Uint8Array) => {
-      Y.applyUpdate(doc, update, null)
-    })
-  }
+    socket.on(`${roomName}-sync-update`, (update: Uint8Array) => {
+      Y.applyUpdate(doc, update, null);
+    });
+  };
 
   /**
    * This function initializes socket event listeners to synchronize awareness changes.
@@ -218,11 +184,19 @@ export class YSocketIO extends Observable<string> {
    * @param {Socket} socket The socket connection
    * @param {Document} doc The document
    */
-  private readonly initAwarenessListeners = (socket: Socket, doc: Document): void => {
-    socket.on('awareness-update', (update: ArrayBuffer) => {
-      AwarenessProtocol.applyAwarenessUpdate(doc.awareness, new Uint8Array(update), socket)
-    })
-  }
+  private readonly initAwarenessListeners = (
+    socket: Socket,
+    doc: Document,
+    roomName: string
+  ): void => {
+    socket.on(`${roomName}-awareness-update`, (update: ArrayBuffer) => {
+      AwarenessProtocol.applyAwarenessUpdate(
+        doc.awareness,
+        new Uint8Array(update),
+        socket
+      );
+    });
+  };
 
   /**
    *  This function initializes socket event listeners for general purposes.
@@ -235,17 +209,16 @@ export class YSocketIO extends Observable<string> {
    * @param {Socket} socket The socket connection
    * @param {Document} doc The document
    */
-  private readonly initSocketListeners = (socket: Socket, doc: Document): void => {
-    socket.on('disconnect', async () => {
+  private readonly initSocketListeners = (
+    socket: Socket,
+    doc: Document
+  ): void => {
+    socket.on("disconnect", async () => {
       if ((await socket.nsp.allSockets()).size === 0) {
-        this.emit('all-document-connections-closed', [doc])
-        if (this.persistence != null) {
-          await this.persistence.writeState(doc.name, doc)
-          await doc.destroy()
-        }
+        this.emit("all-document-connections-closed", [doc]);
       }
-    })
-  }
+    });
+  };
 
   /**
    * This function is called when a client connects and it emit the `sync-step-1` and `awareness-update`
@@ -255,10 +228,24 @@ export class YSocketIO extends Observable<string> {
    * @param {Socket} socket The socket connection
    * @param {Document} doc The document
    */
-  private readonly startSynchronization = (socket: Socket, doc: Document): void => {
-    socket.emit('sync-step-1', Y.encodeStateVector(doc), (update: Uint8Array) => {
-      Y.applyUpdate(doc, new Uint8Array(update), this)
-    })
-    socket.emit('awareness-update', AwarenessProtocol.encodeAwarenessUpdate(doc.awareness, Array.from(doc.awareness.getStates().keys())))
-  }
+  private readonly startSynchronization = (
+    socket: Socket,
+    doc: Document,
+    roomName: string
+  ): void => {
+    socket.emit(
+      `${roomName}-sync-step-1`,
+      Y.encodeStateVector(doc),
+      (update: Uint8Array) => {
+        Y.applyUpdate(doc, new Uint8Array(update), this);
+      }
+    );
+    socket.emit(
+      `${roomName}-awareness-update`,
+      AwarenessProtocol.encodeAwarenessUpdate(
+        doc.awareness,
+        Array.from(doc.awareness.getStates().keys())
+      )
+    );
+  };
 }
