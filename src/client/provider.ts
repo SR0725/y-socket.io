@@ -278,6 +278,7 @@ export class SocketIOProvider extends Observable<string> {
     resyncInterval: ProviderConfiguration["resyncInterval"] = -1
   ): void => {
     this.socket.emit("yjs-connect", this.roomName);
+    this.emit("status", [{ status: "connected" }]);
     this.socket.emit(
       `${this.roomName}-sync-step-1`,
       Y.encodeStateVector(this.doc),
