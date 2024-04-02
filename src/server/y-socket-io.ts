@@ -38,6 +38,10 @@ export class YSocketIO extends Observable<string> {
     Document
   >();
   /**
+   * @type {Map<string, Document>}
+   */
+  private readonly roomSocketListMap: Map<string, string[]> = new Map();
+  /**
    * @type {Server}
    */
   private readonly io: Server;
@@ -75,6 +79,16 @@ export class YSocketIO extends Observable<string> {
   public initialize(): void {
     this.io.on("connection", async (socket) => {
       socket.on("yjs-connect", async (roomName: string) => {
+        if (this.roomSocketListMap.has(roomName)) {
+          const socketList = this.roomSocketListMap.get(roomName);
+          if (socketList?.includes(socket.id)) {
+            return;
+          }
+          socketList?.push(socket.id);
+        } else {
+          this.roomSocketListMap.set(roomName, [socket.id]);
+        }
+        console.log("connection", this.roomSocketListMap);
         const doc = await this.initDocument(
           roomName,
           socket.nsp,
@@ -214,6 +228,18 @@ export class YSocketIO extends Observable<string> {
     doc: Document
   ): void => {
     socket.on("disconnect", async () => {
+      const roomSocketList = this.roomSocketListMap.get(doc.name);
+      if (roomSocketList) {
+        const index = roomSocketList.indexOf(socket.id);
+        if (index > -1) {
+          roomSocketList.splice(index, 1);
+        }
+      }
+      if (roomSocketList?.length === 0) {
+        this.roomSocketListMap.delete(doc.name);
+      }
+      console.log("disconnect", this.roomSocketListMap);
+
       if ((await socket.nsp.allSockets()).size === 0) {
         this.emit("all-document-connections-closed", [doc]);
       }
